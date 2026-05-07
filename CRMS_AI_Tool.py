@@ -8,7 +8,7 @@ import math
 
 # =====================================================
 # 临床研究智能管理工具（CRMS CRDN/SHAPE/CS Team V1.0）
-# V1.11（修复Summary渲染bug，恢复摘要表正常显示）
+# V1.15（修正ATHENA Timeline默认值与Medtronic FY季度口径）
 # =====================================================
 
 APP_TITLE = "临床研究智能管理工具（CRMS CRDN/SHAPE/CS Team V1.0）"
@@ -33,8 +33,24 @@ st.markdown(
 st.markdown(
     """
     <style>
-    .block-container {padding-top: 1.2rem; padding-bottom: 2.2rem; max-width: 1200px;}
-    section[data-testid="stSidebar"] {background: #F6F7FB;}
+    .block-container {padding-top: 1.2rem; padding-bottom: 2.2rem; max-width: 1280px;}
+    section[data-testid="stSidebar"] {
+        background: #F6F7FB;
+        min-width: 450px !important;
+        width: 450px !important;
+    }
+    section[data-testid="stSidebar"] > div:first-child {
+        min-width: 450px !important;
+        width: 450px !important;
+    }
+    section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] p {
+        white-space: normal !important;
+        overflow-wrap: break-word !important;
+    }
+    @media (max-width: 900px) {
+        section[data-testid="stSidebar"] {min-width: 360px !important; width: 360px !important;}
+        section[data-testid="stSidebar"] > div:first-child {min-width: 360px !important; width: 360px !important;}
+    }
     h1, h2, h3 {letter-spacing: -0.02em;}
     div[data-testid="stMetric"] {
         background: #FFFFFF;
@@ -184,18 +200,37 @@ def month_add(start_date: dt.date, offset_months: int) -> dt.date:
     return dt.date(year, month, day)
 
 def fiscal_quarter_label(date_obj: dt.date) -> str:
-    # 5-7: FY(年+1)Q1; 8-10: FY(年+1)Q2; 11-1: FY(对应年)Q3; 2-4: FY(对应年)Q4
-    m = date_obj.month
-    fy_year = date_obj.year + 1 if m >= 5 else date_obj.year
-    if 5 <= m <= 7:
-        q = 1
-    elif 8 <= m <= 10:
-        q = 2
-    elif m in (11, 12, 1):
-        q = 3
-    else:
-        q = 4
-    return f"FY{str(fy_year)[-2:]}Q{q}"
+    """
+    Medtronic/ATHENA fiscal quarter mapping used by the uploaded ATHENA timeline.
+
+    User-provided rule for this project:
+    - FY26Q4: Feb 2026 to May 2026
+    - FY27Q1: Jun 2026 to Aug 2026
+    - FY27Q2: Sep 2026 to Nov 2026
+    - Then repeat: Q3 = Dec-Feb, Q4 = Mar-May
+
+    For later fiscal years, the standard repeating mapping is:
+    Q1 Jun-Aug, Q2 Sep-Nov, Q3 Dec-Feb, Q4 Mar-May.
+    """
+    if hasattr(date_obj, "date") and not isinstance(date_obj, dt.date):
+        date_obj = date_obj.date()
+    y = int(date_obj.year)
+    m = int(date_obj.month)
+
+    # ATHENA timeline starts at FY26Q4 and the supplied slide places Feb-May 2026 in FY26Q4.
+    if y == 2026 and 2 <= m <= 5:
+        fy, q = 26, 4
+    elif 6 <= m <= 8:
+        fy, q = (y + 1) % 100, 1
+    elif 9 <= m <= 11:
+        fy, q = (y + 1) % 100, 2
+    elif m == 12:
+        fy, q = (y + 1) % 100, 3
+    elif m in (1, 2):
+        fy, q = y % 100, 3
+    else:  # Mar-May
+        fy, q = y % 100, 4
+    return f"FY{fy:02d}Q{q}"
 
 def build_quarter_labels_from_range(start_date: dt.date, end_date: dt.date):
     months = months_between(start_date, end_date)
@@ -329,6 +364,166 @@ def format_endpoint_text(months: int) -> str:
     return f"{months}M"
 
 
+# =====================================================
+# ATHENA Heli-FX China Trial 默认预填模板
+# 数据来源：用户提供的ATHENA研究Synopsis、Key Milestones、Timeline-Stretch、Resource Needs和Budget截图
+# =====================================================
+ATHENA_PROJECT_DEFAULTS = {
+    "project_name": "ATHENA Heli-FX China Trial",
+    "study_type": "上市前临床研究",
+    "site_number": 20,  # Synopsis: up to 20 sites; site forecast also notes 12 nominated sites.
+    "n_planned": 142,
+    "n_lost": 0,
+    "n_screen_fail": 0,
+    "start_date": dt.date(2026, 3, 11),  # CIP approved
+    "project_planned_duration_months": 64,  # FY26Q4 prep start (2026-02) to Study Complete (2031-05); aligns with current Timeline span
+    "primary_endpoint_time_months": 30,  # CIP approved to primary endpoint database snapshot around 2028-09
+}
+
+ATHENA_TIMELINE_DEFAULTS = {
+    # ATHENA Timeline is aligned to the supplied Medtronic fiscal-year slide:
+    # FY26Q4 = Feb-May 2026; FY27Q1 = Jun-Aug 2026; FY27Q2 = Sep-Nov 2026.
+    # Key milestones: CIP approved 11-Mar-2026, HGRAC/regulatory approval Sep-2026,
+    # first site/first subject Oct-2026, last site Jan-2027, last subject Jul-2027,
+    # primary endpoint database snapshot Sep-2028, 1Y CSR Jan-2029,
+    # final DBL Sep-2030, final CSR Feb-2031, study complete May-2031.
+
+    # 研究准备阶段：对应Timeline-Stretch中的“Study documents prep & PI, Site list confirmation”
+    "项目立项": (True, dt.date(2026, 2, 1), dt.date(2026, 3, 11)),
+    "研究中心名单提名、筛选及访视": (True, dt.date(2026, 2, 1), dt.date(2026, 5, 31)),
+    "产品及人员培训": (True, dt.date(2026, 6, 1), dt.date(2026, 9, 30)),
+    "供应商筛选与确认": (True, dt.date(2026, 2, 1), dt.date(2026, 5, 31)),
+    "产品运输及相关管理流程准备": (True, dt.date(2026, 4, 1), dt.date(2026, 9, 30)),
+    "研究者会议": (True, dt.date(2026, 3, 1), dt.date(2026, 3, 11)),
+
+    # 研究文件准备 / CIP readiness：CIP approved = 11-Mar-2026；ICF/CRF/内部释放节点来自CIP readiness表
+    "研究方案撰写及获批": (True, dt.date(2026, 2, 1), dt.date(2026, 3, 11)),
+    "CRF设计及数据库建立": (True, dt.date(2026, 3, 12), dt.date(2026, 3, 25)),
+    "知情同意书撰写及获批": (True, dt.date(2026, 3, 12), dt.date(2026, 3, 20)),
+    "研究计划书撰写及获批（监查计划、数据管理计划、统计分析计划等）": (True, dt.date(2026, 3, 12), dt.date(2026, 4, 15)),
+    "其他相关表格及物料准备（受试者日记卡、招募海报、标签等）": (True, dt.date(2026, 3, 20), dt.date(2026, 5, 31)),
+    "文件翻译及定稿": (True, dt.date(2026, 3, 12), dt.date(2026, 4, 30)),
+
+    # 政府部门备案：以HGRAC/监管获批启动研究为主，Sep-2026作为监管启动里程碑
+    "上海药监局备案": (False, dt.date(2026, 4, 15), dt.date(2026, 9, 30)),
+    "人类遗传办提交": (True, dt.date(2026, 4, 15), dt.date(2026, 5, 31)),
+    "人类遗传办获批": (True, dt.date(2026, 9, 1), dt.date(2026, 9, 30)),
+
+    # GCP/EC/合同/中心启动：Site Submission约15-Apr-2026，首中心启动Oct-2026，末中心启动Jan-2027
+    "组长单位GCP资料递交": (True, dt.date(2026, 4, 15), dt.date(2026, 4, 30)),
+    "组长单位EC申请及获批": (True, dt.date(2026, 4, 15), dt.date(2026, 9, 30)),
+    "其他中心EC申请及获批": (True, dt.date(2026, 9, 1), dt.date(2027, 1, 31)),
+    "组长单位合同起草与协商": (True, dt.date(2026, 4, 15), dt.date(2026, 9, 30)),
+    "组长单位合同签字与盖章": (True, dt.date(2026, 9, 1), dt.date(2026, 9, 30)),
+    "组长单位启动": (True, dt.date(2026, 10, 1), dt.date(2026, 10, 31)),
+    "其他中心启动": (True, dt.date(2026, 10, 1), dt.date(2027, 1, 31)),
+
+    # 入组/治疗：参考forecast表，入组约10–11个月；首例Oct-2026，末例Jul-2027
+    "组长单位首例入组": (True, dt.date(2026, 10, 1), dt.date(2026, 10, 31)),
+    "其他中心首例入组": (True, dt.date(2026, 10, 1), dt.date(2027, 1, 31)),
+    "受试者入组": (True, dt.date(2026, 10, 1), dt.date(2027, 7, 31)),
+    "末例入组": (True, dt.date(2027, 7, 1), dt.date(2027, 7, 31)),
+
+    # 随访：随访窗口包含出院、30天、6个月、1年、2年、3年；主要终点DB snapshot Sep-2028
+    "主要终点随访": (True, dt.date(2026, 10, 1), dt.date(2028, 9, 30)),
+    "随访结束": (True, dt.date(2026, 10, 1), dt.date(2030, 9, 30)),
+    "末例受试者末次访视": (True, dt.date(2030, 9, 1), dt.date(2030, 9, 30)),
+
+    # 主要终点分析与注册递交：1Y CSR Jan-2029，商业注册递交Mar-2029
+    "主要终点数据库锁定": (True, dt.date(2028, 9, 1), dt.date(2028, 9, 30)),
+    "主要终点TLG/统计报告撰写": (True, dt.date(2028, 9, 1), dt.date(2029, 1, 31)),
+    "主要终点临床研究报告撰写": (True, dt.date(2028, 9, 1), dt.date(2029, 1, 31)),
+    "主要终点数据的监管提交": (True, dt.date(2029, 3, 1), dt.date(2029, 3, 31)),
+
+    # 最终分析：Final DBL Sep-2030，Final CSR approved Feb-2031
+    "数据库清理与锁定": (True, dt.date(2030, 9, 1), dt.date(2030, 9, 30)),
+    "最终图表TLG/统计报告完成": (True, dt.date(2030, 9, 1), dt.date(2031, 2, 28)),
+    "临床研究报告撰写": (True, dt.date(2030, 9, 1), dt.date(2031, 2, 28)),
+
+    # 研究收尾：Study Complete May-2031
+    "中心关闭访视": (True, dt.date(2031, 2, 1), dt.date(2031, 5, 31)),
+    "临床研究报告的监管递交": (True, dt.date(2031, 2, 1), dt.date(2031, 5, 31)),
+}
+
+ATHENA_BUDGET_QUARTERS = [f"FY{fy}Q{q}" for fy in [27, 28, 29, 30, 31] for q in [1, 2, 3, 4]]
+
+# 预算矩阵按截图“In total”口径录入；截图中的MC2行未计入In total，因此默认不纳入预算合计。
+ATHENA_BUDGET_MATRIX_USD = {
+    "Site Cost": [0, 10990, 141470, 72828, 87192, 28728, 34776, 21168, 21168, 756, 13608, 21168, 21168, 1036, 16688, 21168, 21168, 280, 3080, 0],
+    "Product Costs": [0, 4402, 79229, 123245, 123245, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "CEC Services (Baim)-USA": [10141, 11064, 12847, 12847, 11517, 8859, 8859, 8859, 8859, 8859, 8859, 8859, 8859, 8859, 8859, 8859, 8859, 3857, 1286, 0],
+    "CTA Core Laboratory (NAMSA)-USA": [0, 18957, 56870, 56870, 56870, 56870, 56870, 56870, 37913, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "Image Transfer (Medidata Image)-USA": [0, 1778, 5333, 5333, 5333, 5333, 5333, 5333, 5333, 5333, 5333, 5333, 5333, 5333, 5333, 5333, 3556, 0, 0, 0],
+    "SMO-China": [14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 14212, 0, 0, 0],
+    "DM": [39747, 45651, 33809, 21885, 14897, 14818, 10696, 7270, 7750, 7910, 7722, 7488, 7983, 8147, 7954, 7713, 8222, 17558, 29176, 6170],
+    "Monitoring": [11200, 16800, 16800, 16800, 16800, 16800, 16800, 16800, 16800, 14000, 8400, 8400, 8400, 8400, 8400, 8400, 8400, 11200, 16800, 5600],
+    "Safety": [1426, 2577, 6832, 10895, 12990, 14279, 14040, 13741, 14411, 14708, 14462, 14154, 14844, 15149, 14896, 14578, 15289, 14728, 8832, 0],
+    "Other Costs*": [7701, 20833, 42430, 33097, 33097, 8797.02, 8797.02, 8797.02, 8797.02, 8797.02, 8797.02, 8797.02, 8797.02, 8797.02, 8797.02, 8797.02, 8797.02, 5898.76, 1966.25, 0],
+    "MDT Resources": [165880, 160671, 156421, 156421, 156421, 156421, 147921, 147921, 147921, 147921, 153130, 153130, 153130, 153130, 153130, 137503, 107094, 116454, 107094, 107094],
+    "MDT Travel": [1867, 3733, 5600, 5600, 5600, 1867, 0, 0, 3733, 5600, 0, 0, 3733, 5600, 3733, 0, 3733, 5600, 1867, 0],
+}
+
+ATHENA_BUDGET_EXCLUDED_USD = {
+    # 截图保留此行用于参考，但未纳入“In total”与本工具默认总预算。
+    "MC2 (reference only; excluded from total)": [52373, 65028, 57441, 49580, 44687, 45898, 41537, 37812, 38961, 36617, 30584, 30042, 31226, 31696, 31250, 30692, 31911, 43486, 54807, 11770],
+}
+
+ATHENA_BUDGET_MODULE_MAP = {
+    "Site Cost": "预算模块1：研究中心花费",
+    "Product Costs": "预算模块3：产品物流成本",
+    "MDT Resources": "预算模块4：人力资源成本",
+    "MDT Travel": "预算模块4：人力资源成本",
+}
+
+def athena_budget_item_totals_df() -> pd.DataFrame:
+    rows_out = []
+    for item, vals in ATHENA_BUDGET_MATRIX_USD.items():
+        rows_out.append({
+            "启用": True,
+            "预算模块": ATHENA_BUDGET_MODULE_MAP.get(item, "预算模块2：Vendor 花费"),
+            "费用项目": item,
+            "金额_USD": round(float(sum(vals)), 2),
+            "备注": "ATHENA budget screenshot; MC2 excluded from default total",
+        })
+    return pd.DataFrame(rows_out)
+
+def athena_budget_matrix_long_df(fx_usd_to_rmb: float = 7.0) -> pd.DataFrame:
+    rows_out = []
+    for item, vals in ATHENA_BUDGET_MATRIX_USD.items():
+        module = ATHENA_BUDGET_MODULE_MAP.get(item, "预算模块2：Vendor 花费")
+        for qlab, val_usd in zip(ATHENA_BUDGET_QUARTERS, vals):
+            if float(val_usd or 0) == 0:
+                continue
+            fy, q = parse_fy_quarter_label(qlab)
+            rows_out.append({
+                "财年": fy,
+                "Q": f"Q{q}",
+                "季度": qlab,
+                "预算模块": module,
+                "费用项目": item,
+                "费用_USD": float(val_usd),
+                "费用_RMB": round1(float(val_usd) * float(fx_usd_to_rmb)),
+            })
+    return pd.DataFrame(rows_out)
+
+def athena_cashflow_editor_df() -> pd.DataFrame:
+    q_totals = {qlab: 0.0 for qlab in ATHENA_BUDGET_QUARTERS}
+    for vals in ATHENA_BUDGET_MATRIX_USD.values():
+        for qlab, val in zip(ATHENA_BUDGET_QUARTERS, vals):
+            q_totals[qlab] += float(val or 0.0)
+    total = sum(q_totals.values()) or 1.0
+    rows_out = []
+    for qlab in ATHENA_BUDGET_QUARTERS:
+        fy, q = parse_fy_quarter_label(qlab)
+        rows_out.append({"财年": fy, "季度": q, "占比(%)": round(q_totals[qlab] / total * 100, 2)})
+    return pd.DataFrame(rows_out, columns=["财年", "季度", "占比(%)"])
+
+def athena_budget_amount_for_input_currency(amount_usd: float, input_currency: str, fx_usd_to_rmb: float) -> float:
+    if str(input_currency).upper() == "USD":
+        return float(amount_usd or 0.0)
+    return float(amount_usd or 0.0) * float(fx_usd_to_rmb or 0.0)
+
+
 # ------------------ 预算明细构建 ------------------ #
 def add_cost_item(rows, category, item_name, unit_price_input, qty, remark, input_currency, fx_usd_to_rmb, show_both):
     qty = float(qty or 0.0)
@@ -450,37 +645,37 @@ def allocate_weighted_phases(amount_rmb: float, phase_specs: list, timeline_look
 
 
 BUDGET_ALLOCATION_RULES = {
-    "研究者筛选费": {"phases": [{"level1": "患者入组", "level2": "受试者入组", "weight": 1.0, "mode": "spread"}]},
-    "研究者手术费": {"phases": [{"level1": "患者入组", "level2": "受试者入组", "weight": 1.0, "mode": "spread"}]},
-    "筛选失败费用": {"phases": [{"level1": "患者入组", "level2": "受试者入组", "weight": 1.0, "mode": "spread"}]},
-    "受试者补偿": {"phases": [{"level1": "患者入组", "weight": 0.4}, {"level1": "患者随访", "weight": 0.6}]},
-    "受试者检查费用": {"phases": [{"level1": "患者入组", "weight": 0.35}, {"level1": "患者随访", "weight": 0.65}]},
+    "研究者筛选费": {"phases": [{"level1": "受试者入组", "level2": "受试者入组", "weight": 1.0, "mode": "spread"}]},
+    "研究者手术费": {"phases": [{"level1": "受试者入组", "level2": "受试者入组", "weight": 1.0, "mode": "spread"}]},
+    "筛选失败费用": {"phases": [{"level1": "受试者入组", "level2": "受试者入组", "weight": 1.0, "mode": "spread"}]},
+    "受试者补偿": {"phases": [{"level1": "受试者入组", "weight": 0.4}, {"level1": "受试者随访", "weight": 0.6}]},
+    "受试者检查费用": {"phases": [{"level1": "受试者入组", "weight": 0.35}, {"level1": "受试者随访", "weight": 0.65}]},
     "组长单位费用": {"phases": [{"level1": "研究中心启动", "level2": "组长单位启动", "weight": 1.0, "mode": "lump_start"}]},
-    "EC/Clinical Institute Process费用": {"phases": [{"level1": "GCP&伦理提交", "weight": 0.8}, {"level1": "研究中心启动", "weight": 0.2}]},
-    "中心管理费用": {"phases": [{"level1": "患者入组", "weight": 0.45}, {"level1": "患者随访", "weight": 0.35}, {"level1": "数据分析", "weight": 0.20}]},
-    "Site税费": {"phases": [{"level1": "患者入组", "weight": 0.45}, {"level1": "患者随访", "weight": 0.35}, {"level1": "数据分析", "weight": 0.20}]},
-    "CRC费用": {"phases": [{"level1": "研究中心启动", "weight": 0.10}, {"level1": "患者入组", "weight": 0.50}, {"level1": "患者随访", "weight": 0.30}, {"level1": "数据分析", "weight": 0.10}]},
-    "PM费用": {"phases": [{"level1": "研究准备阶段", "weight": 0.10}, {"level1": "研究文件准备", "weight": 0.15}, {"level1": "GCP&伦理提交", "weight": 0.10}, {"level1": "研究中心启动", "weight": 0.10}, {"level1": "患者入组", "weight": 0.25}, {"level1": "患者随访", "weight": 0.15}, {"level1": "数据分析", "weight": 0.10}, {"level1": "研究结束", "weight": 0.05}]},
-    "Monitor费用": {"phases": [{"level1": "研究中心启动", "weight": 0.20}, {"level1": "患者入组", "weight": 0.45}, {"level1": "患者随访", "weight": 0.25}, {"level1": "研究结束", "weight": 0.10}]},
-    "DM费用": {"phases": [{"level1": "研究文件准备", "weight": 0.25}, {"level1": "患者入组", "weight": 0.15}, {"level1": "患者随访", "weight": 0.20}, {"level1": "数据分析", "weight": 0.40}]},
-    "Safety费用": {"phases": [{"level1": "患者入组", "weight": 0.30}, {"level1": "患者随访", "weight": 0.45}, {"level1": "数据分析", "weight": 0.25}]},
-    "EDC系统费用": {"phases": [{"level1": "研究文件准备", "weight": 0.35}, {"level1": "患者入组", "weight": 0.20}, {"level1": "患者随访", "weight": 0.20}, {"level1": "数据分析", "weight": 0.25}]},
+    "EC/Clinical Institute Process费用": {"phases": [{"level1": "组长单位GCP&伦理递交", "weight": 0.8}, {"level1": "研究中心启动", "weight": 0.2}]},
+    "中心管理费用": {"phases": [{"level1": "受试者入组", "weight": 0.45}, {"level1": "受试者随访", "weight": 0.35}, {"level1": "数据分析", "weight": 0.20}]},
+    "Site税费": {"phases": [{"level1": "受试者入组", "weight": 0.45}, {"level1": "受试者随访", "weight": 0.35}, {"level1": "数据分析", "weight": 0.20}]},
+    "CRC费用": {"phases": [{"level1": "研究中心启动", "weight": 0.10}, {"level1": "受试者入组", "weight": 0.50}, {"level1": "受试者随访", "weight": 0.30}, {"level1": "数据分析", "weight": 0.10}]},
+    "PM费用": {"phases": [{"level1": "研究准备阶段", "weight": 0.10}, {"level1": "研究文件准备", "weight": 0.15}, {"level1": "组长单位GCP&伦理递交", "weight": 0.10}, {"level1": "研究中心启动", "weight": 0.10}, {"level1": "受试者入组", "weight": 0.25}, {"level1": "受试者随访", "weight": 0.15}, {"level1": "数据分析", "weight": 0.10}, {"level1": "研究结束", "weight": 0.05}]},
+    "Monitor费用": {"phases": [{"level1": "研究中心启动", "weight": 0.20}, {"level1": "受试者入组", "weight": 0.45}, {"level1": "受试者随访", "weight": 0.25}, {"level1": "研究结束", "weight": 0.10}]},
+    "DM费用": {"phases": [{"level1": "研究文件准备", "weight": 0.25}, {"level1": "受试者入组", "weight": 0.15}, {"level1": "受试者随访", "weight": 0.20}, {"level1": "数据分析", "weight": 0.40}]},
+    "Safety费用": {"phases": [{"level1": "受试者入组", "weight": 0.30}, {"level1": "受试者随访", "weight": 0.45}, {"level1": "数据分析", "weight": 0.25}]},
+    "EDC系统费用": {"phases": [{"level1": "研究文件准备", "weight": 0.35}, {"level1": "受试者入组", "weight": 0.20}, {"level1": "受试者随访", "weight": 0.20}, {"level1": "数据分析", "weight": 0.25}]},
     "翻译/打印费用": {"phases": [{"level1": "研究文件准备", "weight": 0.75}, {"level1": "研究结束", "weight": 0.25}]},
     "保险费用": {"phases": [{"level1": "研究中心启动", "weight": 1.0, "mode": "lump_start"}]},
     "数据分析费用": {"phases": [{"level1": "数据分析", "weight": 1.0}]},
-    "中心实验室费用": {"phases": [{"level1": "患者入组", "weight": 0.25}, {"level1": "患者随访", "weight": 0.75}]},
-    "CEC费用": {"phases": [{"level1": "患者随访", "weight": 1.0}]},
-    "Travel费用": {"phases": [{"level1": "研究中心启动", "weight": 0.30}, {"level1": "患者入组", "weight": 0.40}, {"level1": "患者随访", "weight": 0.30}]},
-    "Recording费用": {"phases": [{"level1": "患者入组", "weight": 0.50}, {"level1": "患者随访", "weight": 0.50}]},
+    "中心实验室费用": {"phases": [{"level1": "受试者入组", "weight": 0.25}, {"level1": "受试者随访", "weight": 0.75}]},
+    "CEC费用": {"phases": [{"level1": "受试者随访", "weight": 1.0}]},
+    "Travel费用": {"phases": [{"level1": "研究中心启动", "weight": 0.30}, {"level1": "受试者入组", "weight": 0.40}, {"level1": "受试者随访", "weight": 0.30}]},
+    "Recording费用": {"phases": [{"level1": "受试者入组", "weight": 0.50}, {"level1": "受试者随访", "weight": 0.50}]},
     "研究者会费用": {"phases": [{"level1": "研究准备阶段", "level2": "研究者会议", "weight": 1.0, "mode": "lump_start"}]},
-    "Vendor税费": {"phases": [{"level1": "研究准备阶段", "weight": 0.10}, {"level1": "研究文件准备", "weight": 0.10}, {"level1": "研究中心启动", "weight": 0.10}, {"level1": "患者入组", "weight": 0.30}, {"level1": "患者随访", "weight": 0.20}, {"level1": "数据分析", "weight": 0.15}, {"level1": "研究结束", "weight": 0.05}]},
-    "产品运输费用": {"phases": [{"level1": "研究准备阶段", "level2": "产品运输及相关管理流程准备", "weight": 0.30}, {"level1": "患者入组", "weight": 0.70}]},
-    "仓储费用": {"phases": [{"level1": "患者入组", "weight": 0.45}, {"level1": "患者随访", "weight": 0.55}]},
-    "产品成本": {"phases": [{"level1": "患者入组", "weight": 1.0}]},
-    "项目经理FTE费用": {"phases": [{"level1": "研究准备阶段", "weight": 0.12}, {"level1": "研究文件准备", "weight": 0.12}, {"level1": "GCP&伦理提交", "weight": 0.08}, {"level1": "研究中心启动", "weight": 0.10}, {"level1": "患者入组", "weight": 0.25}, {"level1": "患者随访", "weight": 0.18}, {"level1": "数据分析", "weight": 0.10}, {"level1": "研究结束", "weight": 0.05}]},
-    "CRA费用": {"phases": [{"level1": "研究中心启动", "weight": 0.20}, {"level1": "患者入组", "weight": 0.40}, {"level1": "患者随访", "weight": 0.30}, {"level1": "研究结束", "weight": 0.10}]},
-    "MCRS费用": {"phases": [{"level1": "患者入组", "weight": 0.45}, {"level1": "患者随访", "weight": 0.45}, {"level1": "数据分析", "weight": 0.10}]},
-    "Global team费用": {"phases": [{"level1": "研究准备阶段", "weight": 0.10}, {"level1": "研究文件准备", "weight": 0.10}, {"level1": "GCP&伦理提交", "weight": 0.10}, {"level1": "研究中心启动", "weight": 0.10}, {"level1": "患者入组", "weight": 0.25}, {"level1": "患者随访", "weight": 0.15}, {"level1": "数据分析", "weight": 0.10}, {"level1": "研究结束", "weight": 0.10}]},
+    "Vendor税费": {"phases": [{"level1": "研究准备阶段", "weight": 0.10}, {"level1": "研究文件准备", "weight": 0.10}, {"level1": "研究中心启动", "weight": 0.10}, {"level1": "受试者入组", "weight": 0.30}, {"level1": "受试者随访", "weight": 0.20}, {"level1": "数据分析", "weight": 0.15}, {"level1": "研究结束", "weight": 0.05}]},
+    "产品运输费用": {"phases": [{"level1": "研究准备阶段", "level2": "产品运输及相关管理流程准备", "weight": 0.30}, {"level1": "受试者入组", "weight": 0.70}]},
+    "仓储费用": {"phases": [{"level1": "受试者入组", "weight": 0.45}, {"level1": "受试者随访", "weight": 0.55}]},
+    "产品成本": {"phases": [{"level1": "受试者入组", "weight": 1.0}]},
+    "项目经理FTE费用": {"phases": [{"level1": "研究准备阶段", "weight": 0.12}, {"level1": "研究文件准备", "weight": 0.12}, {"level1": "组长单位GCP&伦理递交", "weight": 0.08}, {"level1": "研究中心启动", "weight": 0.10}, {"level1": "受试者入组", "weight": 0.25}, {"level1": "受试者随访", "weight": 0.18}, {"level1": "数据分析", "weight": 0.10}, {"level1": "研究结束", "weight": 0.05}]},
+    "CRA费用": {"phases": [{"level1": "研究中心启动", "weight": 0.20}, {"level1": "受试者入组", "weight": 0.40}, {"level1": "受试者随访", "weight": 0.30}, {"level1": "研究结束", "weight": 0.10}]},
+    "MCRS费用": {"phases": [{"level1": "受试者入组", "weight": 0.45}, {"level1": "受试者随访", "weight": 0.45}, {"level1": "数据分析", "weight": 0.10}]},
+    "Global team费用": {"phases": [{"level1": "研究准备阶段", "weight": 0.10}, {"level1": "研究文件准备", "weight": 0.10}, {"level1": "组长单位GCP&伦理递交", "weight": 0.10}, {"level1": "研究中心启动", "weight": 0.10}, {"level1": "受试者入组", "weight": 0.25}, {"level1": "受试者随访", "weight": 0.15}, {"level1": "数据分析", "weight": 0.10}, {"level1": "研究结束", "weight": 0.10}]},
 }
 
 
@@ -491,7 +686,7 @@ def allocate_budget_item_by_timeline(row: dict, timeline_lookup, fallback_start:
         return pd.DataFrame(columns=["月份", "费用_RMB", "预算阶段", "费用项目", "预算模块"])
 
     if item.startswith("研究者随访费 -"):
-        alloc = allocate_weighted_phases(amount_rmb, [{"level1": "患者随访", "weight": 1.0}], timeline_lookup, fallback_start, fallback_end)
+        alloc = allocate_weighted_phases(amount_rmb, [{"level1": "受试者随访", "weight": 1.0}], timeline_lookup, fallback_start, fallback_end)
     else:
         rule = BUDGET_ALLOCATION_RULES.get(item)
         if rule is None:
@@ -548,21 +743,64 @@ if "generated" not in st.session_state:
 # =====================================================
 st.sidebar.header("项目基本信息")
 
-project_name = st.sidebar.text_input("项目名称", value="示例项目")
-study_type = st.sidebar.selectbox("临床研究类型", ["上市前临床研究", "上市后临床研究", "ERP", "回顾性分析"])
+use_athena_template = st.sidebar.checkbox(
+    "使用ATHENA Heli-FX China研究预填模板",
+    value=True,
+    help="启用后，项目基本信息、Timeline、Budget/Cashflow默认使用用户提供的ATHENA研究截图信息。",
+)
+if use_athena_template and "athena_auto_generated_initialized_v115" not in st.session_state:
+    st.session_state.generated = True
+    st.session_state.athena_auto_generated_initialized_v115 = True
+
+def athena_default(key, fallback):
+    return ATHENA_PROJECT_DEFAULTS.get(key, fallback) if use_athena_template else fallback
+
+project_name = st.sidebar.text_input("项目名称", value=athena_default("project_name", "示例项目"), key="project_name_v115")
+study_type_options = ["上市前临床研究", "上市后临床研究", "ERP", "回顾性分析"]
+study_type_default = athena_default("study_type", "上市前临床研究")
+study_type = st.sidebar.selectbox(
+    "临床研究类型",
+    study_type_options,
+    index=study_type_options.index(study_type_default) if study_type_default in study_type_options else 0,
+)
 
 st.sidebar.subheader("研究规模")
-site_number = st.sidebar.number_input("中心数量", min_value=1, step=1, value=10)
-n_planned = st.sidebar.number_input("计划入组例数 (n)", min_value=1, step=1, value=150)
-n_lost = st.sidebar.number_input("预估失访例数", min_value=0, step=1, value=0)
-n_screen_fail = st.sidebar.number_input("预估筛选失败例数", min_value=0, step=1, value=10)
+site_number = st.sidebar.number_input("中心数量", min_value=1, step=1, value=int(athena_default("site_number", 10)), key="site_number_v115")
+n_planned = st.sidebar.number_input("计划入组例数 (n)", min_value=1, step=1, value=int(athena_default("n_planned", 150)), key="n_planned_v115")
+n_lost = st.sidebar.number_input("预估失访例数 (n)", min_value=0, step=1, value=int(athena_default("n_lost", 0)), key="n_lost_v115")
+n_screen_fail = st.sidebar.number_input("预估筛选失败例数 (n)", min_value=0, step=1, value=int(athena_default("n_screen_fail", 10)), key="n_screen_fail_v115")
 
 st.sidebar.subheader("研究时间")
-start_date = st.sidebar.date_input("研究开始时间", dt.date.today())
+start_date = st.sidebar.date_input(
+    "研究开始时间",
+    athena_default("start_date", dt.date.today()),
+    help="本工具将该日期作为所有自动时间线计算的 Day 0。ATHENA模板默认定义为CIP approved日期（11-Mar-2026）；项目准备工作可早于该日期。",
+    key="start_date_v115",
+)
+st.sidebar.caption("说明：研究开始时间是本工具的统一计算基准日，用于推算各阶段默认开始/结束日期。")
 
 # 新增：用户自填参数
-project_planned_duration_months = st.sidebar.number_input("项目预计持续时间（月）", min_value=1, step=1, value=36)
-primary_endpoint_time_months = st.sidebar.number_input("主要终点时间（月，自研究开始起）", min_value=0, step=1, value=12)
+project_planned_duration_months = st.sidebar.number_input(
+    "项目预计持续时间（月）",
+    min_value=1,
+    step=1,
+    value=int(athena_default("project_planned_duration_months", 36)),
+    help="ATHENA模板默认按FY26Q4准备工作开始（2026-02）至Study Complete（2031-05）计算；非ATHENA项目可按项目管理口径调整。",
+    key="project_planned_duration_months_v115",
+)
+if use_athena_template:
+    st.sidebar.caption("ATHENA模板说明：默认按FY26Q4准备工作启动（2026-02）至Study Complete（2031-05）计算为约64个月；研究开始时间仍以CIP approved（2026-03-11）作为基准。")
+else:
+    st.sidebar.caption("说明：项目预计持续时间用于辅助生成默认随访和整体时间线，可按项目管理口径调整。")
+primary_endpoint_time_months = st.sidebar.number_input(
+    "主要终点数据收集完成时间（月，自研究开始起）",
+    min_value=0,
+    step=1,
+    value=int(athena_default("primary_endpoint_time_months", 12)),
+    help="指从研究开始时间起，预计完成主要终点所需随访并完成主要终点数据收集的相对时间；图中红色虚线以该时间点作为标记。ATHENA模板中该值对应2028年9月主要终点数据库快照/主要终点数据收集完成时间。",
+    key="primary_endpoint_time_months_v115",
+)
+st.sidebar.caption("说明：原‘主要终点时间’已明确为主要终点数据收集完成时间，而不是统计报告或CSR完成时间。")
 
 # =====================================================
 # Timeline：按一级/二级标签管理
@@ -581,39 +819,39 @@ TIMELINE_TEMPLATE = {
     ],
     "研究文件准备": [
         "研究方案撰写及获批",
-        "CRF及数据库建立",
-        "知情同意书",
-        "研究计划书（监查计划、数据管理计划、统计分析计划等）",
-        "其他相关表格及物料（受试者日记卡、招募海报、标签等）",
-        "文件翻译",
-    ],
-    "GCP&伦理提交": [
-        "GCP申请",
-        "组长单位EC申请及获批",
-        "其他中心EC申请及获批",
-    ],
-    "合同签署": [
-        "合同起草与协商",
-        "合同签字与盖章",
+        "CRF设计及数据库建立",
+        "知情同意书撰写及获批",
+        "研究计划书撰写及获批（监查计划、数据管理计划、统计分析计划等）",
+        "其他相关表格及物料准备（受试者日记卡、招募海报、标签等）",
+        "文件翻译及定稿",
     ],
     "政府部门备案": [
         "上海药监局备案",
         "人类遗传办提交",
         "人类遗传办获批",
     ],
+    "组长单位GCP&伦理递交": [
+        "组长单位GCP资料递交",
+        "组长单位EC申请及获批",
+        "其他中心EC申请及获批",
+    ],
+    "组长单位合同签署": [
+        "组长单位合同起草与协商",
+        "组长单位合同签字与盖章",
+    ],
     "研究中心启动": [
         "组长单位启动",
         "其他中心启动",
     ],
-    "患者入组": [
+    "受试者入组": [
         "组长单位首例入组",
         "其他中心首例入组",
         "受试者入组",
         "末例入组",
     ],
-    "患者随访": [
+    "受试者随访": [
         "主要终点随访",
-        "其他随访",
+        "随访结束",
         "末例受试者末次访视",
     ],
     "数据分析": [
@@ -639,16 +877,16 @@ DEFAULT_ITEM_MONTHS = {
     "产品运输及相关管理流程准备": 1,
     "研究者会议": 1,
     "研究方案撰写及获批": 3,
-    "CRF及数据库建立": 2,
-    "知情同意书": 2,
-    "研究计划书（监查计划、数据管理计划、统计分析计划等）": 2,
-    "其他相关表格及物料（受试者日记卡、招募海报、标签等）": 2,
-    "文件翻译": 1,
-    "GCP申请": 1,
+    "CRF设计及数据库建立": 2,
+    "知情同意书撰写及获批": 2,
+    "研究计划书撰写及获批（监查计划、数据管理计划、统计分析计划等）": 2,
+    "其他相关表格及物料准备（受试者日记卡、招募海报、标签等）": 2,
+    "文件翻译及定稿": 1,
+    "组长单位GCP资料递交": 1,
     "组长单位EC申请及获批": 2,
     "其他中心EC申请及获批": 3,
-    "合同起草与协商": 2,
-    "合同签字与盖章": 1,
+    "组长单位合同起草与协商": 2,
+    "组长单位合同签字与盖章": 1,
     "上海药监局备案": 1,
     "人类遗传办提交": 1,
     "人类遗传办获批": 3,
@@ -659,7 +897,7 @@ DEFAULT_ITEM_MONTHS = {
     "受试者入组": 12,
     "末例入组": 1,
     "主要终点随访": 12,
-    "其他随访": 12,
+    "随访结束": 1,
     "末例受试者末次访视": 1,
     "主要终点数据库锁定": 1,
     "主要终点TLG/统计报告撰写": 2,
@@ -682,7 +920,7 @@ def estimate_enroll_months(n_planned: int, site_number: int, rate: float) -> int
     rate = max(0.0001, float(rate))
     return max(1, int(math.ceil(float(n_planned) / (sites * rate))))
 
-enroll_months_est = estimate_enroll_months(int(n_planned), int(site_number), 0.30)
+enroll_months_est = 10 if use_athena_template else estimate_enroll_months(int(n_planned), int(site_number), 0.30)
 
 sequential_defaults = {}
 cur = start_date
@@ -691,32 +929,42 @@ for lvl1 in LEVEL1_ORDER:
         dur_m = int(DEFAULT_ITEM_MONTHS.get(item, 1))
         if item == "受试者入组":
             dur_m = enroll_months_est
-        if item in ["主要终点随访", "其他随访"]:
+        if item == "主要终点随访":
             dur_m = max(1, int(project_planned_duration_months // 3))
         s = cur
         e = (cur + relativedelta(months=+dur_m)) - relativedelta(days=1)
-        sequential_defaults[item] = (s, e)
+        if use_athena_template and item in ATHENA_TIMELINE_DEFAULTS:
+            enabled, s, e = ATHENA_TIMELINE_DEFAULTS[item]
+        sequential_defaults[item] = (bool(enabled) if use_athena_template and item in ATHENA_TIMELINE_DEFAULTS else True, s, e)
         cur = e + relativedelta(days=1)
 
-if "timeline_item_state" not in st.session_state:
+timeline_template_key = "ATHENA_V2_MEDTRONIC_FY_TIMELINE" if use_athena_template else "DEFAULT"
+if (
+    "timeline_item_state" not in st.session_state
+    or any(item not in st.session_state.timeline_item_state for item in sequential_defaults)
+    or st.session_state.get("timeline_template_key") != timeline_template_key
+):
+    # 兼容旧版本缓存：若Timeline标签已改名或切换模板，自动重建默认状态，避免旧session导致KeyError。
     st.session_state.timeline_item_state = {
         item: {
-            "enabled": True,
-            "start": sequential_defaults[item][0],
-            "end": sequential_defaults[item][1],
+            "enabled": sequential_defaults[item][0],
+            "start": sequential_defaults[item][1],
+            "end": sequential_defaults[item][2],
         }
         for item in sequential_defaults
     }
+    st.session_state.timeline_template_key = timeline_template_key
 
 def reset_timeline_defaults():
     st.session_state.timeline_item_state = {
         item: {
-            "enabled": True,
-            "start": sequential_defaults[item][0],
-            "end": sequential_defaults[item][1],
+            "enabled": sequential_defaults[item][0],
+            "start": sequential_defaults[item][1],
+            "end": sequential_defaults[item][2],
         }
         for item in sequential_defaults
     }
+    st.session_state.timeline_template_key = timeline_template_key
 
 with st.sidebar.expander("Timeline 设置（按一级标签展开二级事项）", expanded=True):
     st.caption("勾选需要纳入时间线的二级事项，并用日历分别设置开始/结束日期。右侧将同步生成“项目阶段时间预估”和“项目阶段时间预估（详细）”。")
@@ -758,7 +1006,7 @@ followup_visit_rows = []
 # =====================================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("预算币种与汇率")
-input_currency = st.sidebar.selectbox("输入/展示币种", ["RMB", "USD"], index=0)
+input_currency = st.sidebar.selectbox("输入/展示币种", ["RMB", "USD"], index=1 if use_athena_template else 0)
 fx_usd_to_rmb = st.sidebar.number_input("汇率（1 USD = ? RMB）", min_value=0.01, value=float(USD_TO_RMB_DEFAULT), step=0.1, format="%.2f")
 show_both_currency = st.sidebar.checkbox("预算表同时显示折算币种", value=True)
 
@@ -766,177 +1014,245 @@ st.sidebar.subheader("图表配色")
 pie_color_theme = st.sidebar.selectbox("饼状图配色方案", list(PIE_COLOR_THEMES.keys()), index=0)
 
 rows = []
+site_total_rmb = 0.0
+vendor_total_rmb = 0.0
+product_total_rmb = 0.0
+resource_total_rmb = 0.0
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("ATHENA预算预填")
+use_athena_budget = st.sidebar.checkbox(
+    "启用ATHENA Budget预填（按截图In total口径）",
+    value=use_athena_template,
+    help="启用后使用ATHENA预算截图的FY/Q矩阵汇总金额预填预算，并在Cashflow中按截图季度金额展示。截图中的MC2行未计入In total，因此默认不纳入总预算。",
+)
+
+if use_athena_budget:
+    with st.sidebar.expander("ATHENA Budget line items（USD，可编辑启用状态与总额）", expanded=True):
+        st.caption("默认金额来自用户提供的ATHENA budget截图；系统按费用项目总额进入预算模块，并按原FY/Q矩阵生成Cashflow。")
+        if "athena_budget_editor_df" not in st.session_state or st.session_state.get("athena_budget_template_key") != "ATHENA":
+            st.session_state.athena_budget_editor_df = athena_budget_item_totals_df()
+            st.session_state.athena_budget_template_key = "ATHENA"
+
+        athena_budget_editor_df = st.data_editor(
+            st.session_state.athena_budget_editor_df,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            key="athena_budget_editor_widget",
+            column_config={
+                "启用": st.column_config.CheckboxColumn("启用", default=True),
+                "预算模块": st.column_config.SelectboxColumn(
+                    "预算模块",
+                    options=[
+                        "预算模块1：研究中心花费",
+                        "预算模块2：Vendor 花费",
+                        "预算模块3：产品物流成本",
+                        "预算模块4：人力资源成本",
+                    ],
+                    required=True,
+                ),
+                "费用项目": st.column_config.TextColumn("费用项目", disabled=True),
+                "金额_USD": st.column_config.NumberColumn("金额_USD", min_value=0.0, step=1000.0, format="%.2f"),
+                "备注": st.column_config.TextColumn("备注"),
+            },
+        )
+        st.session_state.athena_budget_editor_df = athena_budget_editor_df.copy()
+
+    for _, r in st.session_state.athena_budget_editor_df.iterrows():
+        if not bool(r.get("启用", True)):
+            continue
+        module = str(r.get("预算模块", "预算模块2：Vendor 花费"))
+        item = str(r.get("费用项目", "")).strip()
+        amount_usd = safe_float(r.get("金额_USD", 0.0), 0.0)
+        if not item or amount_usd <= 0:
+            continue
+        amount_input = athena_budget_amount_for_input_currency(amount_usd, input_currency, fx_usd_to_rmb)
+        added_rmb = add_cost_item(
+            rows, module, item, amount_input, 1,
+            str(r.get("备注", "ATHENA budget prefilled")),
+            input_currency, fx_usd_to_rmb, show_both_currency
+        )
+        if module == "预算模块1：研究中心花费":
+            site_total_rmb += added_rmb
+        elif module == "预算模块3：产品物流成本":
+            product_total_rmb += added_rmb
+        elif module == "预算模块4：人力资源成本":
+            resource_total_rmb += added_rmb
+        else:
+            vendor_total_rmb += added_rmb
 
 # ------------------ 预算模块1：研究中心花费 ------------------ #
-site_total_rmb = 0.0
-with st.sidebar.expander("预算模块1：研究中心花费", expanded=True):
-    if st.checkbox("研究者筛选费", value=True):
-        unit = st.number_input("研究者筛选费 单价/例", min_value=0.0, step=100.0, value=500.0, key="site_screen_u")
-        site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "研究者筛选费", unit, n_planned, "单价*入组例数", input_currency, fx_usd_to_rmb, show_both_currency)
+if not use_athena_budget:
+    site_total_rmb = 0.0
+    with st.sidebar.expander("预算模块1：研究中心花费", expanded=True):
+        if st.checkbox("研究者筛选费", value=True):
+            unit = st.number_input("研究者筛选费 单价/例", min_value=0.0, step=100.0, value=500.0, key="site_screen_u")
+            site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "研究者筛选费", unit, n_planned, "单价*入组例数", input_currency, fx_usd_to_rmb, show_both_currency)
 
-    if st.checkbox("研究者手术费", value=True):
-        unit = st.number_input("研究者手术费 单价/例", min_value=0.0, step=100.0, value=5000.0, key="site_proc_u")
-        site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "研究者手术费", unit, n_planned, "单价*入组例数", input_currency, fx_usd_to_rmb, show_both_currency)
+        if st.checkbox("研究者手术费", value=True):
+            unit = st.number_input("研究者手术费 单价/例", min_value=0.0, step=100.0, value=5000.0, key="site_proc_u")
+            site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "研究者手术费", unit, n_planned, "单价*入组例数", input_currency, fx_usd_to_rmb, show_both_currency)
 
-    st.markdown("#### 随访方式计费（按访视拆分）")
-    use_visit_breakdown = st.checkbox("启用“按访视拆分计费”", value=True, key="site_visit_break")
-    if use_visit_breakdown:
-        default_visits = pd.DataFrame([
-            {"访视名称": "V1", "每例次数": 1, "单价/次": 300.0},
-            {"访视名称": "V2", "每例次数": 1, "单价/次": 300.0},
-            {"访视名称": "V3", "每例次数": 1, "单价/次": 300.0},
-        ])
-        visits_df = st.data_editor(default_visits, use_container_width=True, num_rows="dynamic", key="visits_df")
-        for _, r in visits_df.iterrows():
-            name = str(r.get("访视名称", "")).strip()
-            times = safe_float(r.get("每例次数", 0), 0)
-            unit = safe_float(r.get("单价/次", 0), 0)
-            if name and times > 0 and unit > 0:
-                qty = float(n_planned) * float(times)
-                site_total_rmb += add_cost_item(
-                    rows, "预算模块1：研究中心花费",
-                    f"研究者随访费 - {name}",
-                    unit, qty,
-                    "单价/次 * 每例次数 * 入组例数",
-                    input_currency, fx_usd_to_rmb, show_both_currency
-                )
+        st.markdown("#### 随访方式计费（按访视拆分）")
+        use_visit_breakdown = st.checkbox("启用“按访视拆分计费”", value=True, key="site_visit_break")
+        if use_visit_breakdown:
+            default_visits = pd.DataFrame([
+                {"访视名称": "V1", "每例次数": 1, "单价/次": 300.0},
+                {"访视名称": "V2", "每例次数": 1, "单价/次": 300.0},
+                {"访视名称": "V3", "每例次数": 1, "单价/次": 300.0},
+            ])
+            visits_df = st.data_editor(default_visits, use_container_width=True, num_rows="dynamic", key="visits_df")
+            for _, r in visits_df.iterrows():
+                name = str(r.get("访视名称", "")).strip()
+                times = safe_float(r.get("每例次数", 0), 0)
+                unit = safe_float(r.get("单价/次", 0), 0)
+                if name and times > 0 and unit > 0:
+                    qty = float(n_planned) * float(times)
+                    site_total_rmb += add_cost_item(
+                        rows, "预算模块1：研究中心花费",
+                        f"研究者随访费 - {name}",
+                        unit, qty,
+                        "单价/次 * 每例次数 * 入组例数",
+                        input_currency, fx_usd_to_rmb, show_both_currency
+                    )
 
-    if st.checkbox("筛选失败费用", value=True):
-        unit = st.number_input("筛选失败费用 单价/例", min_value=0.0, step=50.0, value=300.0, key="site_sf_u")
-        site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "筛选失败费用", unit, n_screen_fail, "单价*筛选失败例数", input_currency, fx_usd_to_rmb, show_both_currency)
+        if st.checkbox("筛选失败费用", value=True):
+            unit = st.number_input("筛选失败费用 单价/例", min_value=0.0, step=50.0, value=300.0, key="site_sf_u")
+            site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "筛选失败费用", unit, n_screen_fail, "单价*筛选失败例数", input_currency, fx_usd_to_rmb, show_both_currency)
 
-    if st.checkbox("受试者补偿", value=True):
-        unit = st.number_input("受试者补偿 单价/例", min_value=0.0, step=50.0, value=1000.0, key="site_comp_u")
-        n_subj = st.number_input("受试者补偿 受试者数量", min_value=0, step=1, value=n_planned, key="site_comp_n")
-        site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "受试者补偿", unit, n_subj, "单价*受试者数量", input_currency, fx_usd_to_rmb, show_both_currency)
+        if st.checkbox("受试者补偿", value=True):
+            unit = st.number_input("受试者补偿 单价/例", min_value=0.0, step=50.0, value=1000.0, key="site_comp_u")
+            n_subj = st.number_input("受试者补偿 受试者数量", min_value=0, step=1, value=n_planned, key="site_comp_n")
+            site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "受试者补偿", unit, n_subj, "单价*受试者数量", input_currency, fx_usd_to_rmb, show_both_currency)
 
-    if st.checkbox("受试者检查费用", value=True):
-        unit = st.number_input("受试者检查费用 单价/例", min_value=0.0, step=50.0, value=2000.0, key="site_exam_u")
-        n_exam = st.number_input("受试者检查费用 受检人数", min_value=0, step=1, value=n_planned, key="site_exam_n")
-        site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "受试者检查费用", unit, n_exam, "单价*受检人数", input_currency, fx_usd_to_rmb, show_both_currency)
+        if st.checkbox("受试者检查费用", value=True):
+            unit = st.number_input("受试者检查费用 单价/例", min_value=0.0, step=50.0, value=2000.0, key="site_exam_u")
+            n_exam = st.number_input("受试者检查费用 受检人数", min_value=0, step=1, value=n_planned, key="site_exam_n")
+            site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "受试者检查费用", unit, n_exam, "单价*受检人数", input_currency, fx_usd_to_rmb, show_both_currency)
 
-    if st.checkbox("组长单位费用", value=True):
-        amount = st.number_input("组长单位费用 金额", min_value=0.0, step=10000.0, value=200000.0, key="site_lead_a")
-        site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "组长单位费用", amount, 1, "", input_currency, fx_usd_to_rmb, show_both_currency)
+        if st.checkbox("组长单位费用", value=True):
+            amount = st.number_input("组长单位费用 金额", min_value=0.0, step=10000.0, value=200000.0, key="site_lead_a")
+            site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "组长单位费用", amount, 1, "", input_currency, fx_usd_to_rmb, show_both_currency)
 
-    if st.checkbox("EC/Clinical Institute Process费用", value=True):
-        unit = st.number_input("EC/Institute 平均费用/中心", min_value=0.0, step=1000.0, value=10000.0, key="site_ec_u")
-        site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "EC/Clinical Institute Process费用", unit, site_number, "单价*中心数量", input_currency, fx_usd_to_rmb, show_both_currency)
+        if st.checkbox("EC/Clinical Institute Process费用", value=True):
+            unit = st.number_input("EC/Institute 平均费用/中心", min_value=0.0, step=1000.0, value=10000.0, key="site_ec_u")
+            site_total_rmb += add_cost_item(rows, "预算模块1：研究中心花费", "EC/Clinical Institute Process费用", unit, site_number, "单价*中心数量", input_currency, fx_usd_to_rmb, show_both_currency)
 
-    st.markdown("---")
-    site_mgmt_rate = st.number_input("中心管理费用率（%）", min_value=0.0, step=1.0, value=25.0, key="site_mgmt_r")
-    site_mgmt_fee_rmb = round1(site_total_rmb * site_mgmt_rate / 100.0)
-    if site_mgmt_fee_rmb > 0:
-        site_total_rmb += add_cost_item(
-            rows, "预算模块1：研究中心花费", "中心管理费用",
-            from_rmb(site_mgmt_fee_rmb, input_currency, fx_usd_to_rmb), 1,
-            f"费率 {site_mgmt_rate:.1f}%",
-            input_currency, fx_usd_to_rmb, show_both_currency
-        )
-
-    site_tax_rate = st.number_input("Site税费税率（%）", min_value=0.0, step=1.0, value=6.0, key="site_tax_r")
-    site_tax_rmb = round1(site_total_rmb * site_tax_rate / 100.0)
-    if site_tax_rmb > 0:
-        site_total_rmb += add_cost_item(
-            rows, "预算模块1：研究中心花费", "Site税费",
-            from_rmb(site_tax_rmb, input_currency, fx_usd_to_rmb), 1,
-            f"税率 {site_tax_rate:.1f}%",
-            input_currency, fx_usd_to_rmb, show_both_currency
-        )
-
-# ------------------ 预算模块2：Vendor 花费 ------------------ #
-vendor_total_rmb = 0.0
-with st.sidebar.expander("预算模块2：Vendor 花费", expanded=False):
-
-    def add_hourly_block(label, default_hours, default_rate):
-        if st.checkbox(label, value=True, key=f"v_{label}_cb"):
-            hours = st.number_input(f"{label} 工作总时间 (h)", min_value=0.0, step=1.0, value=float(default_hours), format="%.1f", key=f"v_{label}_h")
-            rate = st.number_input(f"{label} 每小时费用", min_value=0.0, step=50.0, value=float(default_rate), key=f"v_{label}_r")
-            return add_cost_item(rows, "预算模块2：Vendor 花费", label, rate, hours, "工作总时间(h)*每小时费用", input_currency, fx_usd_to_rmb, show_both_currency)
-        return 0.0
-
-    vendor_total_rmb += add_hourly_block("CRC费用", 200.0, 300.0)
-    vendor_total_rmb += add_hourly_block("PM费用", 150.0, 400.0)
-    vendor_total_rmb += add_hourly_block("Monitor费用", 300.0, 350.0)
-    vendor_total_rmb += add_hourly_block("DM费用", 150.0, 300.0)
-    vendor_total_rmb += add_hourly_block("Safety费用", 80.0, 350.0)
-
-    def add_amount_block(label, default_amount):
-        if st.checkbox(label, value=True, key=f"v_{label}_cb2"):
-            amount = st.number_input(f"{label} 金额", min_value=0.0, step=10000.0, value=float(default_amount), key=f"v_{label}_a")
-            return add_cost_item(rows, "预算模块2：Vendor 花费", label, amount, 1, "", input_currency, fx_usd_to_rmb, show_both_currency)
-        return 0.0
-
-    vendor_total_rmb += add_amount_block("EDC系统费用", 200000.0)
-    vendor_total_rmb += add_amount_block("翻译/打印费用", 50000.0)
-    vendor_total_rmb += add_amount_block("保险费用", 80000.0)
-    vendor_total_rmb += add_amount_block("数据分析费用", 150000.0)
-    vendor_total_rmb += add_amount_block("中心实验室费用", 100000.0)
-    vendor_total_rmb += add_amount_block("CEC费用", 120000.0)
-
-    st.markdown("#### Travel费用")
-    if st.checkbox("Travel费用", value=True, key="v_travel_cb"):
-        trips = st.number_input("预计差旅次数（trip）", min_value=0, step=1, value=20, key="v_trips")
-        cost_per_trip = st.number_input("平均单次差旅成本", min_value=0.0, step=100.0, value=2000.0, key="v_trip_cost")
-        vendor_total_rmb += add_cost_item(rows, "预算模块2：Vendor 花费", "Travel费用", cost_per_trip, trips, "单次成本*次数", input_currency, fx_usd_to_rmb, show_both_currency)
-
-    if st.checkbox("Recording费用", value=True, key="v_rec_cb"):
-        n_rec = st.number_input("Recording 例数", min_value=0, step=1, value=n_planned, key="v_rec_n")
-        unit_rec = st.number_input("Recording 单价/例", min_value=0.0, step=50.0, value=200.0, key="v_rec_u")
-        vendor_total_rmb += add_cost_item(rows, "预算模块2：Vendor 花费", "Recording费用", unit_rec, n_rec, "例数*单价", input_currency, fx_usd_to_rmb, show_both_currency)
-
-    vendor_total_rmb += add_amount_block("研究者会费用", 150000.0)
-
-    vendor_tax_rate = st.number_input("Vendor税费税率（%）", min_value=0.0, step=1.0, value=6.0, key="v_tax_r")
-    vendor_tax_rmb = round1(vendor_total_rmb * vendor_tax_rate / 100.0)
-    if vendor_tax_rmb > 0:
-        vendor_total_rmb += add_cost_item(
-            rows, "预算模块2：Vendor 花费", "Vendor税费",
-            from_rmb(vendor_tax_rmb, input_currency, fx_usd_to_rmb), 1,
-            f"税率 {vendor_tax_rate:.1f}%",
-            input_currency, fx_usd_to_rmb, show_both_currency
-        )
-
-# ------------------ 预算模块3：产品物流成本 ------------------ #
-product_total_rmb = 0.0
-with st.sidebar.expander("预算模块3：产品物流成本", expanded=False):
-
-    if st.checkbox("产品运输费用", value=True, key="p_ship_cb"):
-        shipments = st.number_input("运输批次（batch）", min_value=0, step=1, value=10, key="p_ship_n")
-        cost = st.number_input("每批运输成本", min_value=0.0, step=100.0, value=3000.0, key="p_ship_u")
-        product_total_rmb += add_cost_item(rows, "预算模块3：产品物流成本", "产品运输费用", cost, shipments, "每批*批次", input_currency, fx_usd_to_rmb, show_both_currency)
-
-    if st.checkbox("仓储费用", value=True, key="p_store_cb"):
-        months = st.number_input("仓储月数", min_value=0, step=1, value=24, key="p_store_m")
-        cost_m = st.number_input("每月仓储成本", min_value=0.0, step=100.0, value=2000.0, key="p_store_u")
-        product_total_rmb += add_cost_item(rows, "预算模块3：产品物流成本", "仓储费用", cost_m, months, "每月*月数", input_currency, fx_usd_to_rmb, show_both_currency)
-
-    if st.checkbox("产品成本", value=True, key="p_cost_cb"):
-        unit = st.number_input("产品成本（每例/每套）", min_value=0.0, step=100.0, value=10000.0, key="p_cost_u")
-        qty = st.number_input("数量（例/套）", min_value=0, step=1, value=n_planned, key="p_cost_n")
-        product_total_rmb += add_cost_item(rows, "预算模块3：产品物流成本", "产品成本", unit, qty, "单价*数量", input_currency, fx_usd_to_rmb, show_both_currency)
-
-# ------------------ 预算模块4：人力资源成本 ------------------ #
-resource_total_rmb = 0.0
-with st.sidebar.expander("预算模块4：人力资源成本", expanded=False):
-    st.caption("费用 = FTE * 每FTE单价（建议每FTE单价填“项目总成本/周期成本”的口径，确保与你的内部核算一致）")
-    roles = [
-        ("项目经理FTE费用", 0.3, 300000.0),
-        ("CRA费用", 0.5, 250000.0),
-        ("MCRS费用", 0.2, 180000.0),
-        ("Global team费用", 0.1, 500000.0),
-    ]
-    for role, fte0, unit0 in roles:
-        if st.checkbox(role, value=True, key=f"r_{role}_cb"):
-            c1, c2 = st.columns(2)
-            fte = c1.number_input("FTE", min_value=0.0, step=0.05, value=float(fte0), key=f"r_{role}_fte")
-            unit = c2.number_input("每FTE单价", min_value=0.0, step=10000.0, value=float(unit0), key=f"r_{role}_unit")
-            resource_total_rmb += add_cost_item(
-                rows, "预算模块4：人力资源成本", role,
-                unit, fte,
-                "FTE * 每FTE单价",
+        st.markdown("---")
+        site_mgmt_rate = st.number_input("中心管理费用率（%）", min_value=0.0, step=1.0, value=25.0, key="site_mgmt_r")
+        site_mgmt_fee_rmb = round1(site_total_rmb * site_mgmt_rate / 100.0)
+        if site_mgmt_fee_rmb > 0:
+            site_total_rmb += add_cost_item(
+                rows, "预算模块1：研究中心花费", "中心管理费用",
+                from_rmb(site_mgmt_fee_rmb, input_currency, fx_usd_to_rmb), 1,
+                f"费率 {site_mgmt_rate:.1f}%",
                 input_currency, fx_usd_to_rmb, show_both_currency
             )
+
+        site_tax_rate = st.number_input("Site税费税率（%）", min_value=0.0, step=1.0, value=6.0, key="site_tax_r")
+        site_tax_rmb = round1(site_total_rmb * site_tax_rate / 100.0)
+        if site_tax_rmb > 0:
+            site_total_rmb += add_cost_item(
+                rows, "预算模块1：研究中心花费", "Site税费",
+                from_rmb(site_tax_rmb, input_currency, fx_usd_to_rmb), 1,
+                f"税率 {site_tax_rate:.1f}%",
+                input_currency, fx_usd_to_rmb, show_both_currency
+            )
+
+    # ------------------ 预算模块2：Vendor 花费 ------------------ #
+    vendor_total_rmb = 0.0
+    with st.sidebar.expander("预算模块2：Vendor 花费", expanded=False):
+
+        def add_hourly_block(label, default_hours, default_rate):
+            if st.checkbox(label, value=True, key=f"v_{label}_cb"):
+                hours = st.number_input(f"{label} 工作总时间 (h)", min_value=0.0, step=1.0, value=float(default_hours), format="%.1f", key=f"v_{label}_h")
+                rate = st.number_input(f"{label} 每小时费用", min_value=0.0, step=50.0, value=float(default_rate), key=f"v_{label}_r")
+                return add_cost_item(rows, "预算模块2：Vendor 花费", label, rate, hours, "工作总时间(h)*每小时费用", input_currency, fx_usd_to_rmb, show_both_currency)
+            return 0.0
+
+        vendor_total_rmb += add_hourly_block("CRC费用", 200.0, 300.0)
+        vendor_total_rmb += add_hourly_block("PM费用", 150.0, 400.0)
+        vendor_total_rmb += add_hourly_block("Monitor费用", 300.0, 350.0)
+        vendor_total_rmb += add_hourly_block("DM费用", 150.0, 300.0)
+        vendor_total_rmb += add_hourly_block("Safety费用", 80.0, 350.0)
+
+        def add_amount_block(label, default_amount):
+            if st.checkbox(label, value=True, key=f"v_{label}_cb2"):
+                amount = st.number_input(f"{label} 金额", min_value=0.0, step=10000.0, value=float(default_amount), key=f"v_{label}_a")
+                return add_cost_item(rows, "预算模块2：Vendor 花费", label, amount, 1, "", input_currency, fx_usd_to_rmb, show_both_currency)
+            return 0.0
+
+        vendor_total_rmb += add_amount_block("EDC系统费用", 200000.0)
+        vendor_total_rmb += add_amount_block("翻译/打印费用", 50000.0)
+        vendor_total_rmb += add_amount_block("保险费用", 80000.0)
+        vendor_total_rmb += add_amount_block("数据分析费用", 150000.0)
+        vendor_total_rmb += add_amount_block("中心实验室费用", 100000.0)
+        vendor_total_rmb += add_amount_block("CEC费用", 120000.0)
+
+        st.markdown("#### Travel费用")
+        if st.checkbox("Travel费用", value=True, key="v_travel_cb"):
+            trips = st.number_input("预计差旅次数（trip）", min_value=0, step=1, value=20, key="v_trips")
+            cost_per_trip = st.number_input("平均单次差旅成本", min_value=0.0, step=100.0, value=2000.0, key="v_trip_cost")
+            vendor_total_rmb += add_cost_item(rows, "预算模块2：Vendor 花费", "Travel费用", cost_per_trip, trips, "单次成本*次数", input_currency, fx_usd_to_rmb, show_both_currency)
+
+        if st.checkbox("Recording费用", value=True, key="v_rec_cb"):
+            n_rec = st.number_input("Recording 例数", min_value=0, step=1, value=n_planned, key="v_rec_n")
+            unit_rec = st.number_input("Recording 单价/例", min_value=0.0, step=50.0, value=200.0, key="v_rec_u")
+            vendor_total_rmb += add_cost_item(rows, "预算模块2：Vendor 花费", "Recording费用", unit_rec, n_rec, "例数*单价", input_currency, fx_usd_to_rmb, show_both_currency)
+
+        vendor_total_rmb += add_amount_block("研究者会费用", 150000.0)
+
+        vendor_tax_rate = st.number_input("Vendor税费税率（%）", min_value=0.0, step=1.0, value=6.0, key="v_tax_r")
+        vendor_tax_rmb = round1(vendor_total_rmb * vendor_tax_rate / 100.0)
+        if vendor_tax_rmb > 0:
+            vendor_total_rmb += add_cost_item(
+                rows, "预算模块2：Vendor 花费", "Vendor税费",
+                from_rmb(vendor_tax_rmb, input_currency, fx_usd_to_rmb), 1,
+                f"税率 {vendor_tax_rate:.1f}%",
+                input_currency, fx_usd_to_rmb, show_both_currency
+            )
+
+    # ------------------ 预算模块3：产品物流成本 ------------------ #
+    product_total_rmb = 0.0
+    with st.sidebar.expander("预算模块3：产品物流成本", expanded=False):
+
+        if st.checkbox("产品运输费用", value=True, key="p_ship_cb"):
+            shipments = st.number_input("运输批次（batch）", min_value=0, step=1, value=10, key="p_ship_n")
+            cost = st.number_input("每批运输成本", min_value=0.0, step=100.0, value=3000.0, key="p_ship_u")
+            product_total_rmb += add_cost_item(rows, "预算模块3：产品物流成本", "产品运输费用", cost, shipments, "每批*批次", input_currency, fx_usd_to_rmb, show_both_currency)
+
+        if st.checkbox("仓储费用", value=True, key="p_store_cb"):
+            months = st.number_input("仓储月数", min_value=0, step=1, value=24, key="p_store_m")
+            cost_m = st.number_input("每月仓储成本", min_value=0.0, step=100.0, value=2000.0, key="p_store_u")
+            product_total_rmb += add_cost_item(rows, "预算模块3：产品物流成本", "仓储费用", cost_m, months, "每月*月数", input_currency, fx_usd_to_rmb, show_both_currency)
+
+        if st.checkbox("产品成本", value=True, key="p_cost_cb"):
+            unit = st.number_input("产品成本（每例/每套）", min_value=0.0, step=100.0, value=10000.0, key="p_cost_u")
+            qty = st.number_input("数量（例/套）", min_value=0, step=1, value=n_planned, key="p_cost_n")
+            product_total_rmb += add_cost_item(rows, "预算模块3：产品物流成本", "产品成本", unit, qty, "单价*数量", input_currency, fx_usd_to_rmb, show_both_currency)
+
+    # ------------------ 预算模块4：人力资源成本 ------------------ #
+    resource_total_rmb = 0.0
+    with st.sidebar.expander("预算模块4：人力资源成本", expanded=False):
+        st.caption("费用 = FTE * 每FTE单价（建议每FTE单价填“项目总成本/周期成本”的口径，确保与你的内部核算一致）")
+        roles = [
+            ("项目经理FTE费用", 0.3, 300000.0),
+            ("CRA费用", 0.5, 250000.0),
+            ("MCRS费用", 0.2, 180000.0),
+            ("Global team费用", 0.1, 500000.0),
+        ]
+        for role, fte0, unit0 in roles:
+            if st.checkbox(role, value=True, key=f"r_{role}_cb"):
+                c1, c2 = st.columns(2)
+                fte = c1.number_input("FTE", min_value=0.0, step=0.05, value=float(fte0), key=f"r_{role}_fte")
+                unit = c2.number_input("每FTE单价", min_value=0.0, step=10000.0, value=float(unit0), key=f"r_{role}_unit")
+                resource_total_rmb += add_cost_item(
+                    rows, "预算模块4：人力资源成本", role,
+                    unit, fte,
+                    "FTE * 每FTE单价",
+                    input_currency, fx_usd_to_rmb, show_both_currency
+                )
 
 # ------------------ 预算财年季度分布（用户填写） ------------------ #
 st.sidebar.markdown("---")
@@ -946,14 +1262,19 @@ use_custom_fy_q_pct = st.sidebar.checkbox("启用“自定义财年/季度分配
 timeline_default_start = min([x["开始日期"] for x in phase_date_inputs]) if phase_date_inputs else start_date
 timeline_default_end = max([x["结束日期"] for x in phase_date_inputs]) if phase_date_inputs else month_add(start_date, project_planned_duration_months - 1)
 
-if "cashflow_editor_df" not in st.session_state:
-    st.session_state.cashflow_editor_df = build_default_cashflow_editor_df(timeline_default_start, timeline_default_end)
+cashflow_template_key = "ATHENA_V2_MEDTRONIC_FY" if use_athena_budget else "DEFAULT"
+if (
+    "cashflow_editor_df" not in st.session_state
+    or st.session_state.get("cashflow_template_key") != cashflow_template_key
+):
+    st.session_state.cashflow_editor_df = athena_cashflow_editor_df() if use_athena_budget else build_default_cashflow_editor_df(timeline_default_start, timeline_default_end)
+    st.session_state.cashflow_template_key = cashflow_template_key
 
 with st.sidebar.expander("设置财年 + 季度 + 占比（可新增/删除）", expanded=False):
     st.caption("你可以直接修改财年、季度、占比；也可以新增/删除行。系统会按全部行的占比自动归一化分配预算。")
 
     if st.button("按当前 Timeline 重置 FY/Q 表", key="reset_cashflow_editor"):
-        st.session_state.cashflow_editor_df = build_default_cashflow_editor_df(timeline_default_start, timeline_default_end)
+        st.session_state.cashflow_editor_df = athena_cashflow_editor_df() if use_athena_budget else build_default_cashflow_editor_df(timeline_default_start, timeline_default_end)
 
     edited_cashflow_df = st.data_editor(
         st.session_state.cashflow_editor_df,
@@ -1029,6 +1350,21 @@ base_total_rmb = round1(site_total_rmb + vendor_total_rmb + product_total_rmb + 
 total_budget_rmb = base_total_rmb
 total_budget_display = round1(from_rmb(total_budget_rmb, input_currency, fx_usd_to_rmb))
 smart_quarter_df_rmb, smart_month_alloc_df = build_smart_cashflow(rows, df_timeline, timeline_start, timeline_end)
+if use_athena_budget:
+    # ATHENA模板下，Cashflow优先按预算截图的FY/Q矩阵展示，而不是按通用规则重新摊分。
+    athena_alloc_long = athena_budget_matrix_long_df(fx_usd_to_rmb)
+    if not athena_alloc_long.empty:
+        smart_month_alloc_df = athena_alloc_long.copy()
+        smart_month_alloc_df["月份"] = smart_month_alloc_df["季度"].apply(
+            lambda qlab: dt.date(
+                2000 + parse_fy_quarter_label(qlab)[0] - (1 if parse_fy_quarter_label(qlab)[1] in [1, 2, 3] else 0),
+                {1: 5, 2: 8, 3: 11, 4: 2}[parse_fy_quarter_label(qlab)[1]],
+                1
+            )
+        )
+        smart_month_alloc_df["预算阶段"] = smart_month_alloc_df["季度"]
+        smart_month_alloc_df = smart_month_alloc_df[["月份", "费用_RMB", "预算阶段", "费用项目", "预算模块"]].copy()
+        smart_quarter_df_rmb = pd.DataFrame()
 
 # ==================== 顶部概览 ==================== #
 with st.container():
@@ -1036,7 +1372,10 @@ with st.container():
     with left:
         st.markdown(f"## {project_name} / {study_type}")
         st.caption(
-            f"研究类型：{study_type} ｜ 中心数：{int(site_number)} ｜ 计划入组：{int(n_planned)} ｜ 项目计划持续时间（月）：{int(project_planned_duration_months)}"
+            f"研究类型：{study_type} ｜ 中心数：{int(site_number)} ｜ 计划入组(n)：{int(n_planned)} ｜ "
+            f"预估失访(n)：{int(n_lost)} ｜ 预估筛选失败(n)：{int(n_screen_fail)} ｜ "
+            f"项目计划持续时间（月）：{int(project_planned_duration_months)} ｜ "
+            f"主要终点数据收集完成时间（月）：{int(primary_endpoint_time_months)}"
         )
     with right:
         st.write("")
@@ -1084,9 +1423,9 @@ with tab_tl:
         fig_level1.update_xaxes(showgrid=True, gridcolor="rgba(15,23,42,0.08)")
         try:
             today = pd.to_datetime(dt.date.today())
-            fig_level1.add_vline(x=today, line_width=2, line_dash="dot", line_color="rgba(37,99,235,0.9)")
+            fig_level1.add_vline(x=today, line_width=2, line_dash="dot", line_color="rgba(37,99,235,0.9)", annotation_text="今日", annotation_position="top left")
             pe_date = month_add(start_date, int(primary_endpoint_time_months))
-            fig_level1.add_vline(x=pd.to_datetime(pe_date), line_width=2, line_dash="dash", line_color="rgba(220,38,38,0.85)")
+            fig_level1.add_vline(x=pd.to_datetime(pe_date), line_width=2, line_dash="dash", line_color="rgba(220,38,38,0.85)", annotation_text="主要终点数据收集完成", annotation_position="top right")
         except Exception:
             pass
         st.plotly_chart(fig_level1, use_container_width=True)
@@ -1113,9 +1452,9 @@ with tab_tl:
         fig_level2.update_xaxes(showgrid=True, gridcolor="rgba(15,23,42,0.08)")
         try:
             today = pd.to_datetime(dt.date.today())
-            fig_level2.add_vline(x=today, line_width=2, line_dash="dot", line_color="rgba(37,99,235,0.9)")
+            fig_level2.add_vline(x=today, line_width=2, line_dash="dot", line_color="rgba(37,99,235,0.9)", annotation_text="今日", annotation_position="top left")
             pe_date = month_add(start_date, int(primary_endpoint_time_months))
-            fig_level2.add_vline(x=pd.to_datetime(pe_date), line_width=2, line_dash="dash", line_color="rgba(220,38,38,0.85)")
+            fig_level2.add_vline(x=pd.to_datetime(pe_date), line_width=2, line_dash="dash", line_color="rgba(220,38,38,0.85)", annotation_text="主要终点数据收集完成", annotation_position="top right")
         except Exception:
             pass
         st.plotly_chart(fig_level2, use_container_width=True)
@@ -1304,9 +1643,25 @@ with tab_budget:
 # =====================================================
 with tab_cash:
     st.subheader("预算按财年季度分布")
-    st.caption("柱状图已直接基于预算-时间线智能映射后的月度拆分结果生成，并汇总到财年与财年季度。")
+    if use_athena_budget:
+        st.caption("ATHENA模板：柱状图按用户提供的Budget截图FY/Q矩阵生成；MC2参考行未计入默认预算总额。")
+    else:
+        st.caption("柱状图已直接基于预算-时间线智能映射后的月度拆分结果生成，并汇总到财年与财年季度。")
 
     cash_currency = st.radio("Cashflow 显示币种", ["RMB", "USD"], horizontal=True, key="cashflow_display_currency_radio")
+
+    if use_athena_budget:
+        with st.expander("查看ATHENA原始Budget矩阵（USD，按截图录入）", expanded=False):
+            athena_matrix_display = pd.DataFrame(ATHENA_BUDGET_MATRIX_USD, index=ATHENA_BUDGET_QUARTERS).T
+            athena_matrix_display["Total_USD"] = athena_matrix_display.sum(axis=1)
+            st.dataframe(athena_matrix_display, use_container_width=True)
+            csv_athena_matrix = athena_matrix_display.to_csv(encoding="utf-8-sig")
+            st.download_button(
+                label="下载ATHENA Budget矩阵 CSV",
+                data=csv_athena_matrix,
+                file_name=f"{project_name}_ATHENA_Budget_Matrix_USD.csv",
+                mime="text/csv",
+            )
 
     if smart_month_alloc_df.empty:
         st.info("季度分布为空（总预算为0或未形成有效的预算-时间线月度拆分）。")
@@ -1529,7 +1884,10 @@ with tab_checks:
     checks = []
     tl_months = months_between(timeline_start, timeline_end)
     if abs(tl_months - int(project_planned_duration_months)) >= 6:
-        checks.append(f"项目预计持续时间（{int(project_planned_duration_months)}月）与当前时间线跨度（{tl_months}月）差异较大：建议复核各阶段起止日期或持续时间口径。")
+        if use_athena_template:
+            st.info(f"ATHENA模板提示：当前Timeline包含CIP批准前的研究准备工作，因此时间线跨度（{tl_months}月）可能长于项目预计持续时间（{int(project_planned_duration_months)}月）。")
+        else:
+            checks.append(f"项目预计持续时间（{int(project_planned_duration_months)}月）与当前时间线跨度（{tl_months}月）差异较大：建议复核各阶段起止日期或持续时间口径。")
 
     enroll_phase = next((x for x in phase_date_inputs if x["子任务"] == "受试者入组"), None)
     if enroll_phase is not None:
@@ -1558,7 +1916,9 @@ with tab_checks:
 with tab_summary:
     st.subheader("项目摘要")
 
-    if study_type == "上市前临床研究":
+    if use_athena_template:
+        study_design_text = "Pre-market, prospective, multicenter, single-arm"
+    elif study_type == "上市前临床研究":
         study_design_text = "Single arm, Pre-market, Prospective"
     elif study_type == "上市后临床研究":
         study_design_text = "Post-market, Prospective"
@@ -1589,12 +1949,22 @@ with tab_summary:
             except Exception:
                 followup_visits_n = 0
 
+    if use_athena_template:
+        followup_months = 36
+        followup_visits_n = 6  # discharge, 30d, 6M, 1Y, 2Y, 3Y
+        summary_primary_endpoint_months = 12
+    else:
+        summary_primary_endpoint_months = primary_endpoint_time_months
+
     summary_rows = [
         {"项目": "Study Title", "内容": project_name},
         {"项目": "Study Design", "内容": study_design_text},
+        {"项目": "Principal Investigator", "内容": "Professor Zhong Chen, Beijing Anzhen Hospital, Capital Medical University" if use_athena_template else ""},
+        {"项目": "Geography", "内容": "China mainland" if use_athena_template else ""},
         {"项目": "Target FU Duration", "内容": format_fu_years_text(followup_months)},
-        {"项目": "Primary Endpoint", "内容": format_endpoint_text(primary_endpoint_time_months)},
-        {"项目": "FU visits (30d,6M,1Y-3Y)", "内容": int(followup_visits_n)},
+        {"项目": "Primary Endpoint", "内容": format_endpoint_text(summary_primary_endpoint_months)},
+        {"项目": "Primary Endpoint Data Snapshot", "内容": "Sep-2028" if use_athena_template else format_endpoint_text(primary_endpoint_time_months)},
+        {"项目": "FU visits (Discharge,30d,6M,1Y-3Y)", "内容": int(followup_visits_n)},
         {"项目": "Estimated Enrolments", "内容": int(n_planned)},
         {"项目": "Estimated # of Sites", "内容": int(site_number)},
         {"项目": "Estimated Study Start Date", "内容": study_start_year},
